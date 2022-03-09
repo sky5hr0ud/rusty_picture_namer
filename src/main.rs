@@ -5,20 +5,23 @@ use std::cmp::Reverse;
 
 fn main() {
     println!("Hello, world!");
-    let folder_path = "C:\\Users\\distu\\Downloads\\New folder\\Random 2022\\755018865683263.webp";
-    println!("{:?}", file_namer(folder_path));
+    let folder_path = "C:\\Users\\distu\\Downloads\\New folder\\Random 2021\\Housewarming Party";
+    let filetypes_path = "C:\\Users\\distu\\Documents\\Scripts\\Git\\picture_namer\\_list_of_filetypes.txt";
+    println!("{:?}", file_namer(folder_path, filetypes_path));
+    //println!("{:?}", get_filetypes(filetypes_path));
 }
 
-fn file_namer(folder_path: &str) -> Result<bool, Error> {
+fn file_namer(folder_path: &str, filetypes_path: &str) -> Result<bool, Error> {
     std::env::set_current_dir(folder_path)?;
     let sys_time = SystemTime::now();
     let mut paths: Vec<fs::DirEntry> = fs::read_dir(folder_path).unwrap().filter_map(Result::ok).collect();
     paths.retain(|path| fs::metadata(path.path()).unwrap().is_file());
-    let file_extensions = ["jpg", "png", "gif"];
-    paths.retain(|path| {path.path().extension().unwrap().to_str().map_or(true, |file_extension| file_extensions.contains(&file_extension))});
+    let file_types = get_filetypes(filetypes_path)?;//["jpg", "png", "gif"];
+    paths.retain(|path| vec_contains(&file_types, path.path().extension().unwrap().to_str().unwrap()));
     paths.sort_by_key(|path| Reverse(sys_time.duration_since(fs::metadata(path.path()).unwrap().modified().unwrap()).unwrap().as_millis()));
+    println!("{:?}", paths);
     let mut file_count = file_counter(&paths)?; // try out the naming operation to see how many files it renames
-    let lead_zeros = lead_zeros(5, file_count); // want to make sure that we have enough padding
+    let lead_zeros = lead_zeros(5, file_count.1); // want to make sure that we have enough padding
     let mut files_renamed: u32 = 0;
     for path in paths {
         let file = path.path();
@@ -29,10 +32,10 @@ fn file_namer(folder_path: &str) -> Result<bool, Error> {
         if file_name.starts_with(&directory) {
             continue
         } else {
-            let new_file_name = directory + "_" + &zfill(file_count.to_string(), lead_zeros) + "_" + &file_name;
+            let new_file_name = directory + "_" + &zfill(file_count.0.to_string(), lead_zeros) + "_" + &file_name;
             println!("{} -> {}", file_name, new_file_name);
             fs::rename(file, new_file_name)?;
-            file_count += 1;
+            file_count.0 += 1;
             files_renamed += 1;
         }
     }
@@ -41,8 +44,9 @@ fn file_namer(folder_path: &str) -> Result<bool, Error> {
 }
 
 /// Count the files to be renamed. Some files may already have the directory name already prepended so no rename needs to be done.
-fn file_counter(paths: &Vec<fs::DirEntry>) -> Result<u32, Error> {
-    let mut count: u32 = 0;
+fn file_counter(paths: &Vec<fs::DirEntry>) -> Result<(u32, u32),  Error> {
+    let mut files: u32 = 0;
+    let mut files_already_modified: u32 = 0;
     for path in paths {
         let file = path.path();
         let file_name = file.file_name().unwrap().to_str().unwrap().to_string();
@@ -50,12 +54,20 @@ fn file_counter(paths: &Vec<fs::DirEntry>) -> Result<u32, Error> {
         ancestors.next();
         let directory = ancestors.next().unwrap().file_stem().unwrap().to_str().unwrap().replace(" ", "_");
         if file_name.starts_with(&directory) {
-            continue
-        } else {
-            count += 1;
-        }
+            files_already_modified += 1;
+        } 
+        files += 1;
     }
-    return Ok(count)
+    return Ok((files_already_modified, files))
+}
+
+fn get_filetypes(filetypes_file: &str) -> Result<Vec<String>, Error> {
+    let mut contents = fs::read_to_string(filetypes_file)?;
+    contents = contents.to_ascii_lowercase() + &contents.to_ascii_uppercase();
+    let mut contents_vec: Vec<String> = contents.split_whitespace().map(str::to_string).collect();
+    contents_vec.retain(|entry| entry.starts_with("."));
+    contents_vec.retain(|entry| !entry.contains("#"));
+    return Ok(contents_vec)
 }
 
 /// Returns a String of length new_length with leading zeros. 
@@ -74,8 +86,19 @@ fn zfill(str: String, new_length: usize) -> String {
 fn lead_zeros(mut lead_zeros: usize, file_count: u32) -> usize {
     if file_count.to_string().len() >= lead_zeros {
         lead_zeros += 2;
-    } else {
-        lead_zeros = file_count as usize;
     }
     return lead_zeros
+}
+
+// option_result_contains is unstable. 
+fn vec_contains(vec: &Vec<String>, str: &str) -> bool {    
+    let mut new_string = String::from(str);
+    new_string.insert(0, '.');
+    let mut contains = false;
+    for element in vec {
+        if *element == new_string {
+            contains = true;
+        }
+    }
+    return contains
 }
