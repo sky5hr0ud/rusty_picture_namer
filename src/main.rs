@@ -1,28 +1,53 @@
+use std::io::Write;
 use std::error::Error;
 use std::fs;
 use std::time::SystemTime;
 use std::cmp::Reverse;
 use std::env;
 use walkdir::WalkDir;
+use time::OffsetDateTime;
 
 /// One arg <folder_path> which provides the path to the files that need to be renamed is required.
 /// The other arg <list_of_filetyps> is optional. If used it will provide an alternate list of filetypes to use.
 ///
 /// If too many or not enough args are inputted the program will exit with -1. 
+///
+/// If an error occurred while running the program will exit with -2.
 fn main() {
+    // result: (bool, String): result.0 = false means that an error occurred or the code did not run
+    //                         result.0 = true means that the code ran and no unrecoverable errors occurred
+    let mut result: (bool, String) = (false, String::from("Filenamer has not ran."));
+    let mut folder_path = String::from("No folder path inputted.");
+    let mut filetypes_path = String::from("No filetypes path inputted.");
     let args_length = env::args().len();
     if args_length < 2 || args_length > 3 {
-        println!("Need at least one arg! required arg: <folder_path> optional arg: <list_of_filetypes>");
+        println!("Need at least one arg! Required arg: <folder_path> Optional arg: <list_of_filetypes>");
         std::process::exit(-1);
     } else if args_length == 2 {
-        let folder_path = env::args().nth(1).unwrap();
-        let result = arg_parser_2(folder_path);
-        println!("{:?}", result);
+        folder_path = env::args().nth(1).unwrap_or(String::from("Inputted folder path could not be parsed."));
+        result = match arg_parser_2(&folder_path) {
+            Ok(output) => (output, String::from("Filenamer ran with no errors")),
+            Err(err) => (false, err.to_string())
+        };
     } else if args_length == 3 {
-        let folder_path = env::args().nth(1).unwrap();
-        let filetypes_path = env::args().nth(2).unwrap();
-        let result = arg_parser_3(folder_path, filetypes_path);
-        println!("{:?}", result);
+        folder_path = env::args().nth(1).unwrap_or(String::from("Inputted folder path could not be parsed."));
+        filetypes_path = env::args().nth(2).unwrap_or(String::from("Inputted filetypes path could not be parsed."));
+        result = match arg_parser_3(&folder_path, &filetypes_path) {
+            Ok(output) => (output, String::from("Filenamer ran with no errors")),
+            Err(err) => (false, err.to_string())
+        };        
+    }
+    if result.0 == false {
+        let log = String::from("Inputted folder path: ") + &folder_path + "\n" + "Inputted filetypes path: " + &filetypes_path + "\n" + &result.1;
+        match log_writer(&folder_path, log) {
+            Ok(log_name) => println!("Error occurred. Successfully wrote log: {} at location: {}", log_name, folder_path),
+            Err(err) => eprintln!("ERROR: {} occurred when attempting to write log file in location: {}.", err.to_string(), folder_path),
+        };
+    } else {
+        println!("{}", result.1);
+    }
+    if result.0 == false {
+        std::process::exit(-2);
     }
     std::process::exit(0);
 }
@@ -33,7 +58,7 @@ fn main() {
 /// .jpg .jpeg .png .mp4 .dng .gif .nef .bmp .jpe .jif .jfif .jfi
 /// .webp .tiff .tif .psd .raw .arw .cr2 .nrw .k25 .dib .heif .heic .ind .indd .indt .jp2 .j2k .jpf
 /// .jpx .jpm .mj2 .svg .svgz .ai .eps .pdf .xcf .cdr .sr2 .orf .bin .afphoto .mkv
-fn arg_parser_2(folder_path: String) -> Result<bool, Box<dyn Error>> {
+fn arg_parser_2(folder_path: &String) -> Result<bool, Box<dyn Error>> {
     let filetypes = include_str!("_list_of_filetypes.txt").to_string();
     let alt_filetypes = alt_get_filetypes(filetypes)?;
     directory_walker(&folder_path, alt_filetypes)?;
@@ -44,7 +69,7 @@ fn arg_parser_2(folder_path: String) -> Result<bool, Box<dyn Error>> {
 /// and the second one is the path to a list containing filetypes. This supports additional file formats.
 ///
 /// "// and "# can be used as comments in the file. The file is read in as a String.
-fn arg_parser_3(folder_path: String, filetypes_path: String) -> Result<bool, Box<dyn Error>> {
+fn arg_parser_3(folder_path: &String, filetypes_path: &String) -> Result<bool, Box<dyn Error>> {
     let filetypes = get_filetypes(&filetypes_path)?;
     directory_walker(&folder_path, filetypes)?;
     return Ok(true)
@@ -58,14 +83,19 @@ fn directory_walker(folder_path: &str, filetypes: Vec<String>) -> Result<bool, B
     println!("Preparing to rename files in {}", folder_path);
     let mut directories: Vec<walkdir::DirEntry> = WalkDir::new(folder_path).into_iter().filter_map(|e| e.ok()).collect();
     directories.retain(|entry| fs::metadata(entry.path()).unwrap().is_dir());
-    for directory in directories {
-        file_namer(directory.path(), &filetypes)?;
+    let mut files_renamed: u32 = 0;
+    if directories.is_empty() {
+        println!("No directories found in: {}", folder_path);
     }
+    for directory in directories {
+        files_renamed += file_namer(directory.path(), &filetypes)?;
+    }
+    println!("Renamed {} files", files_renamed);
     return Ok(true)
 }
 
 /// This renames the files with the specified filetypes.
-fn file_namer(folder_path: &std::path::Path, filetypes: &Vec<String>) -> Result<bool, Box<dyn Error>> {
+fn file_namer(folder_path: &std::path::Path, filetypes: &Vec<String>) -> Result<u32, Box<dyn Error>> {
     std::env::set_current_dir(folder_path)?;
     let sys_time = SystemTime::now();
     let mut paths: Vec<fs::DirEntry> = fs::read_dir(folder_path).unwrap().filter_map(|e| e.ok()).collect();
@@ -92,7 +122,7 @@ fn file_namer(folder_path: &std::path::Path, filetypes: &Vec<String>) -> Result<
         }
     }
     println!("Renamed {} files in {}", files_renamed, folder_path.display());
-    return Ok(true)
+    return Ok(files_renamed)
 }
 
 /// Counts the files to be renamed. Some files may already have the directory name already prepended so no rename needs to be done.
@@ -189,4 +219,23 @@ fn modified_duration(time: std::time::SystemTime, file: &std::path::Path) -> u12
     let modified_time = fs::metadata(file).unwrap().modified();
     let duration = time.duration_since(modified_time.unwrap());
     return duration.unwrap().as_millis()
+}
+
+/// Writes the contents of String: log_contents into a ".log" file with the name: rusty_picture_namer_YYYY-MM-DD_HHMMSS.log
+/// at location: folder_path.
+fn log_writer(folder_path: &String, log_contents: String) -> Result<String, Box<dyn Error>> {
+    let program_name = String::from("rusty_picture_namer_");
+    std::env::set_current_dir(folder_path)?;
+    let sys_time = OffsetDateTime::now_utc();
+    let sys_time_hms = sys_time.to_hms();
+    // timestamp = YYYY-MM-DD_HHMMSS
+    let timestamp = sys_time.date().to_string() + "_" + &zfill(sys_time_hms.0.to_string(), 2) 
+                    + &zfill(sys_time_hms.1.to_string(), 2) + &zfill(sys_time_hms.2.to_string(), 2);
+    // log_name = rusty_picture_namer_YYYY-MM-DD_HHMMSS.log
+    let log_name = program_name + &timestamp + ".log";
+    let mut log_file = fs::File::create(&log_name)?;
+    log_file.write_all(&timestamp.as_bytes())?;
+    log_file.write_all(String::from("\n").as_bytes())?;
+    log_file.write_all(log_contents.as_bytes())?;
+    return Ok(log_name)
 }
